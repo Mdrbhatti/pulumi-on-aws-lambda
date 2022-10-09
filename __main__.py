@@ -1,78 +1,105 @@
-import os
-import logging
+import json
 import pulumi
-from pulumi import automation as auto
-from pulumi_aws import s3
+import pulumi_aws as aws
+import pulumi_awsx as awsx
 
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
+lambda_ecr_repository = aws.ecr.Repository(
+    "lambda-ecr-repository",
+    image_scanning_configuration=aws.ecr.RepositoryImageScanningConfigurationArgs(
+        scan_on_push=False,
+    ),
+    image_tag_mutability="MUTABLE",
+)
 
-PULUMI_AWS_REGION = "eu-central-1"
-PULUMI_PROJECT_NAME = "pulumi-on-aws-lambda"
-PULUMI_STACK_PLUGINS = {"aws": "v5.13.0"}
+lambda_ecr_docker_image = awsx.ecr.Image(
+    "lambda-docker-image-ecr",
+    repository_url=lambda_ecr_repository.repository_url,
+    dockerfile="./pulumi-lambda/Dockerfile",
+    path="./pulumi-lambda",
+)
 
-logging.basicConfig(level=LOG_LEVEL)
-LOGGER = logging.getLogger()
-
-
-class PulumiInlineProgram:
-    def __init__(self):
-        self.ws = auto.LocalWorkspace()
-        for plugin, version in PULUMI_STACK_PLUGINS.items():
-            self.ws.install_plugin(plugin, version)
-
-        self.project_name = "dev"
-        self.stack_name = "dev"
-        self.index_content = "hello world\n"
-
-        # create a new stack, generating our pulumi program on the fly from the POST body
-        self.stack = auto.create_stack(
-            stack_name=self.stack_name,
-            project_name=PULUMI_PROJECT_NAME,
-            program=self.__pulumi_program,
-        )
-        self.stack.set_config("aws:region", auto.ConfigValue(PULUMI_AWS_REGION))
-
-        self.stack.up(on_output=LOGGER.info)
-
-    def __pulumi_program(self):
-        """Pulumi program for creating a static website hosted on S3"""
-
-        # Create a bucket and expose a website index document
-        site_bucket = s3.Bucket(
-            "s3-website-bucket",
-            website=s3.BucketWebsiteArgs(index_document="index.html"),
-        )
-
-        # Write our index.html into the site bucket
-        s3.BucketObject(
-            "index",
-            bucket=site_bucket.id,
-            content=self.index_content,
-            key="index.html",
-            content_type="text/html; charset=utf-8",
-        )
-
-        # Set the access policy for the bucket so all objects are readable
-        s3.BucketPolicy(
-            "bucket-policy",
-            bucket=site_bucket.id,
-            policy={
-                "Version": "2012-10-17",
-                "Statement": {
+lambda_iam_role = aws.iam.Role(
+    "lambda-iam-role",
+    assume_role_policy=json.dumps(
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "AllowAssumeRole",
                     "Effect": "Allow",
-                    "Principal": "*",
-                    "Action": ["s3:GetObject"],
-                    # Policy refers to bucket explicitly
-                    "Resource": [
-                        pulumi.Output.concat("arn:aws:s3:::", site_bucket.id, "/*")
+                    "Action": "sts:AssumeRole",
+                    "Principal": {"Service": "lambda.amazonaws.com"},
+                }
+            ],
+        }
+    ),
+    inline_policies=[
+        aws.iam.RoleInlinePolicyArgs(
+            name="AllowCWLoggingAccess",
+            policy=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "AllowCloudwatchLogsAccess",
+                            "Effect": "Allow",
+                            "Resource": "arn:aws:logs:*:*:*",
+                            "Action": [
+                                "logs:PutLogEvents",
+                                "logs:DescribeLogStreams",
+                                "logs:CreateLogStream",
+                                "logs:CreateLogGroup",
+                            ],
+                        }
                     ],
-                },
-            },
-        )
+                }
+            ),
+        ),
+        aws.iam.RoleInlinePolicyArgs(
+            # Note: update this policy if lambda needs more permissions for deploying pulumi program
+            name="AllowS3Access",
+            policy=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "AllowS3Access",
+                            "Effect": "Allow",
+                            "Action": ["s3:*"],
+                            "Resource": "*",
+                        }
+                    ],
+                }
+            ),
+        ),
+    ],
+)
 
-        # Export the website URL
-        pulumi.export("website_url", site_bucket.website_endpoint)
+lambda_function = aws.lambda_.Function(
+    "pulumi-lambda-function",
+    package_type="Image",
+    image_uri=lambda_ecr_docker_image.image_uri,
+    role=lambda_iam_role.arn,
+    memory_size=128,
+    environment=aws.lambda_.FunctionEnvironmentArgs(
+        variables={
+            "LOG_LEVEL": "INFO",
+        },
+    ),
+)
 
+lambda_function_url = aws.lambda_.FunctionUrl(
+    "lambda-function-url",
+    function_name=lambda_function.name,
+    authorization_type="NONE",
+    cors=aws.lambda_.FunctionUrlCorsArgs(
+        allow_credentials=True,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+        max_age=86400,
+    ),
+)
 
-if __name__ == "__main__":
-    program = PulumiInlineProgram()
+pulumi.export("url", lambda_function_url.function_url)

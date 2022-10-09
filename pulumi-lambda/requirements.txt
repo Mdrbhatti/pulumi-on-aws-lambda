@@ -1,3 +1,2 @@
 pulumi==3.42.0
 pulumi-aws==5.16.2
-pulumi-awsx==1.0.0b11

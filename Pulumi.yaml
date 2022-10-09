@@ -1,0 +1,6 @@
+name: pulumi-on-aws-lambda
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+description: pulumi on aws lambda
