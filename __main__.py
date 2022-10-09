@@ -1,7 +1,11 @@
+import os
 import json
 import pulumi
 import pulumi_aws as aws
 import pulumi_awsx as awsx
+
+PULUMI_BACKEND_URL = os.environ.get("PULUMI_BACKEND_URL", "file:///tmp")
+PULUMI_SECRETS_PROVIDER = os.environ.get("PULUMI_SECRETS_PROVIDER", "passphrase")
 
 lambda_ecr_repository = aws.ecr.Repository(
     "lambda-ecr-repository",
@@ -80,10 +84,15 @@ lambda_function = aws.lambda_.Function(
     package_type="Image",
     image_uri=lambda_ecr_docker_image.image_uri,
     role=lambda_iam_role.arn,
-    memory_size=128,
+    memory_size=2048,
+    # required when installing pulumi plugins in the lambda function
+    ephemeral_storage=aws.lambda_.FunctionEphemeralStorageArgs(size=1024),
+    timeout=900,  # 15 minutes which is the max timeout
     environment=aws.lambda_.FunctionEnvironmentArgs(
         variables={
-            "LOG_LEVEL": "INFO",
+            "LOG_LEVEL": "DEBUG",
+            "PULUMI_BACKEND_URL": PULUMI_BACKEND_URL,
+            "PULUMI_SECRETS_PROVIDER": PULUMI_SECRETS_PROVIDER,
         },
     ),
 )

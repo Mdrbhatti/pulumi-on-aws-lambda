@@ -5,9 +5,15 @@ import pulumi
 from pulumi import automation as auto
 from pulumi_aws import s3
 
+
+AWS_REGION = os.environ["AWS_REGION"]
+
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
 
-PULUMI_AWS_REGION = "eu-central-1"
+PULUMI_BACKEND_URL = os.environ["PULUMI_BACKEND_URL"]
+PULUMI_SECRETS_PROVIDER = os.environ["PULUMI_SECRETS_PROVIDER"]
+PULUMI_HOME = os.environ["PULUMI_HOME"]
+
 PULUMI_PROJECT_NAME = "pulumi-lambda-static-site"
 # Note: make sure the plugins are the same version
 # as defined in requirements.txt
@@ -23,19 +29,41 @@ class PulumiInlineProgram:
         for plugin, version in PULUMI_STACK_PLUGINS.items():
             self.ws.install_plugin(plugin, version)
 
-        self.project_name = "dev"
+        self.project_name = PULUMI_PROJECT_NAME
+        self.backend_url = PULUMI_BACKEND_URL
+        self.secrets_provider = PULUMI_SECRETS_PROVIDER
+        self.pulumi_work_dir = PULUMI_HOME
+        self.runtime = "python"
+
         self.stack_name = "dev"
         self.index_content = "hello world\n"
 
         # create a new stack, generating our pulumi program on the fly from the POST body
-        self.stack = auto.create_stack(
-            stack_name=self.stack_name,
-            project_name=PULUMI_PROJECT_NAME,
-            program=self.__pulumi_program,
-        )
-        self.stack.set_config("aws:region", auto.ConfigValue(PULUMI_AWS_REGION))
 
-        self.stack.up(on_output=LOGGER.info)
+        self.project_settings = auto.ProjectSettings(
+            name=self.project_name,
+            runtime=self.runtime,
+            backend=auto.ProjectBackend(url=self.backend_url),
+        )
+
+        self.stack_settings = auto.StackSettings(secrets_provider="secrets_provider")
+
+        self.local_workspace_options = auto.LocalWorkspaceOptions(
+            project_settings=self.project_settings,
+            secrets_provider=self.secrets_provider,
+            stack_settings={self.stack_name: self.stack_settings},
+        )
+
+        self.stack = auto.create_or_select_stack(
+            stack_name=self.stack_name,
+            work_dir=self.pulumi_work_dir,
+            project_name=self.project_name,
+            program=self.__pulumi_program,
+            opts=self.local_workspace_options,
+        )
+        self.stack.set_config("aws:region", auto.ConfigValue(AWS_REGION))
+
+        self.stack.preview(on_output=LOGGER.info)
 
     def __pulumi_program(self):
         """Pulumi program for creating a static website hosted on S3"""
@@ -84,7 +112,9 @@ def lambda_handler(event, _ctx):
         LOGGER.info(f"Event: {event}")
 
         # todo: handle events and provision bucket
-        return json.dumps({"message": "not yet implemented"})
+        PulumiInlineProgram()
+
+        return json.dumps({"message": "success"})
     except BaseException as ex:
         LOGGER.exception("Failed Execution: %s", ex)
         raise ex

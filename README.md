@@ -17,5 +17,5 @@ To verify if lambda was correctly deployed, try accessing the lambda via it's fu
 
 ```bash
 $ curl $(pulumi stack output url)
-{"message": "not yet implemented"}%                                                                                             
+{"message": "success"}%                                                                                             
 ```
