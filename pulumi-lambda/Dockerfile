@@ -27,7 +27,6 @@ COPY --from=builder /root/.pulumi/bin/pulumi ${PULUMI_BIN_PATH}/pulumi
 RUN chmod 755 ${PULUMI_BIN_PATH}/pulumi
 # add binary to path and specify PULUMI_HOME to use the only writable directory on Lambda
 ENV PATH="${PULUMI_BIN_PATH}:${PATH}" \
-    PULUMI_HOME="/tmp" \
-    PULUMI_CONFIG_PASSPHRASE=""
+    PULUMI_HOME="/tmp"
 
 CMD ["lambda_function.lambda_handler"]

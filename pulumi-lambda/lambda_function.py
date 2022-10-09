@@ -7,51 +7,47 @@ from pulumi_aws import s3
 
 
 AWS_REGION = os.environ["AWS_REGION"]
-
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
-
 PULUMI_BACKEND_URL = os.environ["PULUMI_BACKEND_URL"]
 PULUMI_SECRETS_PROVIDER = os.environ["PULUMI_SECRETS_PROVIDER"]
 PULUMI_HOME = os.environ["PULUMI_HOME"]
-
-PULUMI_PROJECT_NAME = "pulumi-lambda-static-site"
 # Note: make sure the plugins are the same version
 # as defined in requirements.txt
 PULUMI_STACK_PLUGINS = {"aws": "v5.16.2"}
 
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
 LOGGER = logging.getLogger()
 LOGGER.setLevel(LOG_LEVEL)
 
 
-class PulumiInlineProgram:
-    def __init__(self):
-        self.ws = auto.LocalWorkspace()
-        for plugin, version in PULUMI_STACK_PLUGINS.items():
-            self.ws.install_plugin(plugin, version)
+def log_update_summary(result):
+    LOGGER.info(
+        f"update summary: \n{json.dumps(result.summary.resource_changes, indent=4)}"
+    )
 
-        self.project_name = PULUMI_PROJECT_NAME
+
+class PulumiInlineProgram:
+    def __init__(self, name, index_content=None):
+        self.project_name = "pulumi-lambda-static-site"
         self.backend_url = PULUMI_BACKEND_URL
         self.secrets_provider = PULUMI_SECRETS_PROVIDER
         self.pulumi_work_dir = PULUMI_HOME
         self.runtime = "python"
+        self.index_content = index_content
 
-        self.stack_name = "dev"
-        self.index_content = "hello world\n"
-
-        # create a new stack, generating our pulumi program on the fly from the POST body
-
-        self.project_settings = auto.ProjectSettings(
-            name=self.project_name,
-            runtime=self.runtime,
-            backend=auto.ProjectBackend(url=self.backend_url),
-        )
-
-        self.stack_settings = auto.StackSettings(secrets_provider="secrets_provider")
+        self.stack_name = f"{self.project_name}.{name}"
 
         self.local_workspace_options = auto.LocalWorkspaceOptions(
-            project_settings=self.project_settings,
+            project_settings=auto.ProjectSettings(
+                name=self.project_name,
+                runtime=self.runtime,
+                backend=auto.ProjectBackend(url=self.backend_url),
+            ),
             secrets_provider=self.secrets_provider,
-            stack_settings={self.stack_name: self.stack_settings},
+            stack_settings={
+                self.stack_name: auto.StackSettings(
+                    secrets_provider=self.secrets_provider
+                )
+            },
         )
 
         self.stack = auto.create_or_select_stack(
@@ -61,9 +57,36 @@ class PulumiInlineProgram:
             program=self.__pulumi_program,
             opts=self.local_workspace_options,
         )
+
         self.stack.set_config("aws:region", auto.ConfigValue(AWS_REGION))
 
-        self.stack.preview(on_output=LOGGER.info)
+        # install plugins required by the pulumi program
+        for plugin, version in PULUMI_STACK_PLUGINS.items():
+            self.stack.workspace.install_plugin(plugin, version)
+
+    def run(self, operation):
+        if operation == "create":
+            result = self.stack.up(on_output=LOGGER.info)
+            log_update_summary(result)
+            response = {
+                "status": "created",
+                "website_url": result.outputs["website_url"].value,
+            }
+        elif operation == "destroy":
+            result = self.stack.destroy(on_output=LOGGER.info)
+            log_update_summary(result)
+
+            self.stack.workspace.remove_stack(self.stack_name)
+            LOGGER.info("successfully removed stack")
+
+            response = {"status": "destroyed"}
+        else:
+            response = {
+                "status": "failed",
+                "message": f"invalid operation `{operation}`. choose either `create` or `destroy`",
+            }
+
+        return json.dumps(response)
 
     def __pulumi_program(self):
         """Pulumi program for creating a static website hosted on S3"""
@@ -108,17 +131,24 @@ class PulumiInlineProgram:
 def lambda_handler(event, _ctx):
     """Entrypoint for AWS lambda function"""
     try:
-        LOGGER.info(f"Environment: {os.environ}")
-        LOGGER.info(f"Event: {event}")
+        LOGGER.debug(f"environment: {os.environ}")
+        LOGGER.debug(f"event: {event}")
 
-        # todo: handle events and provision bucket
-        PulumiInlineProgram()
+        body = json.loads(event["body"])
 
-        return json.dumps({"message": "success"})
+        program = PulumiInlineProgram(
+            name=body["name"].lower(),
+            # index content not available during destroy operation
+            index_content=body.get("index_content", None),
+        )
+
+        return program.run(body["operation"])
     except BaseException as ex:
-        LOGGER.exception("Failed Execution: %s", ex)
+        LOGGER.exception("failed Execution: %s", ex)
         raise ex
 
 
 if __name__ == "__main__":
-    program = PulumiInlineProgram()
+    # for local testing
+    p = PulumiInlineProgram("dev", "hello world\n")
+    p.run("create")

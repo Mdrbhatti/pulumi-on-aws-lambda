@@ -4,8 +4,10 @@ import pulumi
 import pulumi_aws as aws
 import pulumi_awsx as awsx
 
-PULUMI_BACKEND_URL = os.environ.get("PULUMI_BACKEND_URL", "file:///tmp")
-PULUMI_SECRETS_PROVIDER = os.environ.get("PULUMI_SECRETS_PROVIDER", "passphrase")
+# used by the pulumi program in pulumi-lambda function
+# ideally this should be the same backend/secrets provider that's used for deploying the current program
+PULUMI_BACKEND_URL = os.environ["PULUMI_BACKEND_URL"]
+PULUMI_SECRETS_PROVIDER = os.environ["PULUMI_SECRETS_PROVIDER"]
 
 lambda_ecr_repository = aws.ecr.Repository(
     "lambda-ecr-repository",
@@ -13,6 +15,7 @@ lambda_ecr_repository = aws.ecr.Repository(
         scan_on_push=False,
     ),
     image_tag_mutability="MUTABLE",
+    force_delete=True,
 )
 
 lambda_ecr_docker_image = awsx.ecr.Image(
@@ -22,6 +25,8 @@ lambda_ecr_docker_image = awsx.ecr.Image(
     path="./pulumi-lambda",
 )
 
+# Note: if using S3 as a pulumi backend, the lambda would also require permissions for accessing the bucket
+# Same goes for when using KMS key as a secrets provider
 lambda_iam_role = aws.iam.Role(
     "lambda-iam-role",
     assume_role_policy=json.dumps(
@@ -61,7 +66,7 @@ lambda_iam_role = aws.iam.Role(
         ),
         aws.iam.RoleInlinePolicyArgs(
             # Note: update this policy if lambda needs more permissions for deploying pulumi program
-            name="AllowS3Access",
+            name="AllowPulumiBackendAndStaticSiteS3Access",
             policy=json.dumps(
                 {
                     "Version": "2012-10-17",
@@ -76,11 +81,36 @@ lambda_iam_role = aws.iam.Role(
                 }
             ),
         ),
+        # Note: remove this when not using KMS as a secrets provider
+        # allow access to pulumi kms key
+        aws.iam.RoleInlinePolicyArgs(
+            name="AllowPulumiSecretsProviderKmsAccess",
+            policy=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "AllowS3Access",
+                            "Effect": "Allow",
+                            "Action": [
+                                "kms:Encrypt",
+                                "kms:Decrypt",
+                                "kms:ReEncrypt*",
+                                "kms:GenerateDataKey*",
+                                "kms:DescribeKey",
+                            ],
+                            # Would be better to specify key and restrict this policy
+                            "Resource": "*",
+                        }
+                    ],
+                }
+            ),
+        ),
     ],
 )
 
 lambda_function = aws.lambda_.Function(
-    "pulumi-lambda-function",
+    "lambda-function",
     package_type="Image",
     image_uri=lambda_ecr_docker_image.image_uri,
     role=lambda_iam_role.arn,
