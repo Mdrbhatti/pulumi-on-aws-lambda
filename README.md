@@ -1,0 +1,1 @@
+# pulumi-on-aws-lambda
