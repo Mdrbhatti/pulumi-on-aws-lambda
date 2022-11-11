@@ -12,7 +12,7 @@ PULUMI_SECRETS_PROVIDER = os.environ["PULUMI_SECRETS_PROVIDER"]
 PULUMI_HOME = os.environ["PULUMI_HOME"]
 # Note: make sure the plugins are the same version
 # as defined in requirements.txt
-PULUMI_STACK_PLUGINS = {"aws": "v5.16.2"}
+PULUMI_STACK_PLUGINS = {"aws": "v5.20.0"}
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
 LOGGER = logging.getLogger()

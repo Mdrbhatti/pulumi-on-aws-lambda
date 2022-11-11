@@ -1,6 +1,6 @@
 FROM public.ecr.aws/lambda/python:3.9 AS builder
 
-ARG PULUMI_VERSION=3.42.0
+ARG PULUMI_VERSION=3.46.1
 
 # tar, gzip required by pulumi install script
 RUN yum install tar gzip -y && \
