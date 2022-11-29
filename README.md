@@ -2,6 +2,8 @@
 
 Minimal Pulumi program that showcases the use of [Pulumi Automation API](https://www.pulumi.com/docs/guides/automation-api/) from within an AWS Lambda function.
 
+Background for this showcase is detailed here: https://justedagain.com/posts/2022/pulumi-on-aws-lambda/
+
 
 The program provisions the following AWS resources:
 - ECR repository for hosting lambda docker container images
